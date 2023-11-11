@@ -1,10 +1,14 @@
 #include "block_meta_list.h"
 
-void add_in_list(struct block_meta **head, struct block_meta *new_block, int status)
-{
+extern struct block_meta *tail;
+
+extern void *heap_end;
+
+void add_in_list(struct block_meta **head, struct block_meta **tail, struct block_meta *new_block, int status) {
 	// Insertion when head is NULL
 	if (*head == NULL) {
 		*head = new_block;
+		*tail = new_block;
 		new_block->prev = NULL;
 		new_block->next = NULL;
 		return;
@@ -16,24 +20,24 @@ void add_in_list(struct block_meta **head, struct block_meta *new_block, int sta
 			// Inserting another STATUS_MAPPED after head
 			new_block->next = (*head)->next;
 			new_block->prev = *head;
-			
-			// Update the next block's prev
-			if ((*head)->next != NULL)
-				(*head)->next->prev = new_block;
 
-			(*head)->next->prev = new_block;
+			// Update the next block's prev
+			if ((*head)->next != NULL) {
+				(*head)->next->prev = new_block;
+			} else {
+				*tail = new_block; // Update tail if we're at the end
+			}
 		} else {
 			// Inserting a STATUS_ALLOC before head
 			new_block->next = *head;
 			new_block->prev = NULL;
 			(*head)->prev = new_block;
-			*head = new_block;
+			*head = new_block; // Update head
 		}
 		return;
 	}
 
 	struct block_meta *current = *head;
-
 	if (status == STATUS_MAPPED) {
 		// Find the last node in the list to add the STATUS_MAPPED block
 		while (current->next != NULL) {
@@ -43,24 +47,24 @@ void add_in_list(struct block_meta **head, struct block_meta *new_block, int sta
 		current->next = new_block;
 		new_block->prev = current;
 		new_block->next = NULL;
+		*tail = new_block; // Update tail
 	} else if (status == STATUS_ALLOC) {
-		// Find the position to insert the STATUS_ALLOC block before
-		// any STATUS_MAPPED block
-
+		// Find the position to insert the STATUS_ALLOC block before any STATUS_MAPPED block
 		while (current->next != NULL && current->next->status != STATUS_MAPPED) {
 			current = current->next;
 		}
 
-		// Insert STATUS_ALLOC block before the first STATUS_MAPPED block
 		new_block->next = current->next;
+		new_block->prev = current;
+		current->next = new_block;
 
-		// Update the next node's prev
-		if (current->next != NULL)
-			current->next->prev = new_block;
+		// Update the next node's prev and possibly the tail
+		if (current->next->next != NULL) {
+			current->next->next->prev = new_block;
+		} else {
+			*tail = new_block; // Update tail if we're at the end
+		}
 	}
-
-	new_block->prev = current;
-	current->next = new_block;
 }
 
 struct block_meta *find_block_with_size(struct block_meta *head, size_t needed_size, size_t loc_blk_meta_size)
@@ -72,7 +76,7 @@ struct block_meta *find_block_with_size(struct block_meta *head, size_t needed_s
 
 	// Merge consecutive free blocks
 	for (struct block_meta *current = head; current && current->next; ) {
-		if (current->status == STATUS_FREE && current->next->status == STATUS_FREE) {
+		if (current != heap_end && current->status == STATUS_FREE && current->next->status == STATUS_FREE) {
 			// Merge current and next blocks
 			current->size += current->next->size + loc_blk_meta_size;
 			current->next = current->next->next;
@@ -104,6 +108,12 @@ struct block_meta *find_block_with_size(struct block_meta *head, size_t needed_s
 			if (expansion == (void *) -1) {
 				return NULL; // Expansion failed
 			}
+
+			heap_end = (char *)heap_end + (needed_size - last_block->size);
+
+			// TODO check if this is correct
+			tail = (struct block_meta *)(tail + (needed_size - last_block->size));
+
 			config_meta(last_block, needed_size, STATUS_ALLOC);
 			return last_block;
 		}
@@ -115,24 +125,13 @@ struct block_meta *find_block_with_size(struct block_meta *head, size_t needed_s
 
 struct block_meta *split_blk(struct block_meta *initial, size_t needed_size, size_t loc_blk_meta_size)
 {
-	// Determine if the block is large enough to be split
-	// The block can be split if it's large enough to hold the requested size, 
-	// the metadata for a new block, and at least one byte for the new block's data
 	if (initial->size >= needed_size + ALIGN(1) + loc_blk_meta_size) {
-		// Calculate the start address of the new block
-		// This is done by moving forward from the initial block's start by the needed size and the metadata size
 		struct block_meta *new_block = (struct block_meta *)((char *)initial + loc_blk_meta_size + needed_size);
-		
-		// Configure the new block
-		// The size is the remaining size after deducting the needed size and the metadata size
-		// The new block is marked as free and is linked to the initial block's next block
+
 		new_block->size = initial->size - needed_size - loc_blk_meta_size;
 		new_block->status = STATUS_FREE;
 		new_block->next = initial->next;
 
-		// Update the initial block
-		// Its size is set to the needed size and it is marked as allocated
-		// The next pointer is updated to point to the new block
 		initial->size = needed_size;
 		initial->status = STATUS_ALLOC;
 		initial->next = new_block;
@@ -165,9 +164,8 @@ struct block_meta *get_last_brk_blk(struct block_meta *head)
 	return NULL;
 }
 
-void remove_from_list(struct block_meta **head, struct block_meta *current)
-{
-	// Check if the list is empty
+void remove_from_list(struct block_meta **head, struct block_meta **tail, struct block_meta *current) {
+	// Check if the list is empty or current is NULL
 	if (*head == NULL || current == NULL) {
 		return;
 	}
@@ -177,12 +175,17 @@ void remove_from_list(struct block_meta **head, struct block_meta *current)
 		*head = current->next;
 	}
 
-	// If the node to be deleted is NOT the last node, then change the next of previous node
+	// If the node to be deleted is the tail node
+	if (*tail == current) {
+		*tail = current->prev;
+	}
+
+	// If the node to be deleted is NOT the last node, then change the next of the previous node
 	if (current->next != NULL) {
 		current->next->prev = current->prev;
 	}
 
-	// If the node to be deleted is NOT the first node, then change the prev of next node
+	// If the node to be deleted is NOT the first node, then change the prev of the next node
 	if (current->prev != NULL) {
 		current->prev->next = current->next;
 	}

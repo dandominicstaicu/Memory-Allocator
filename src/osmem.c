@@ -8,6 +8,9 @@
 #include "block_meta_list.h"
 
 struct block_meta *head;
+struct block_meta *tail;
+
+void *heap_end = NULL;
 
 size_t blk_meta_size = BLOCK_SIZE;
 
@@ -60,7 +63,6 @@ void *os_alloc_helper(size_t blk_size, size_t threshold, int zero) {
 	return allocated_mem;
 }
 
-
 void *os_malloc(size_t size)
 {
 	int calloc = 0;
@@ -77,12 +79,12 @@ void os_free(void *ptr)
 		return;
 
 	// Get the block at the given address
-	struct block_meta *current = (struct block_meta *) (((char *) ptr) - blk_meta_size);
+	struct block_meta *current = get_block_from_addr(ptr, blk_meta_size);
 
 	if (current->status == STATUS_ALLOC) {
 		current->status = STATUS_FREE;
 	} else if (current->status == STATUS_MAPPED) {
-		remove_from_list(&head, current);
+		remove_from_list(&head, &tail, current);
 		int return_val = munmap((void *) current, current->size + blk_meta_size);
 
 		DIE(return_val == -1, "Error at munmap in os_free\n");
@@ -99,6 +101,61 @@ void *os_calloc(size_t nmemb, size_t size)
 
 void *os_realloc(void *ptr, size_t size)
 {
-	/* TODO: Implement os_realloc */
+	if (ptr == NULL) {
+		return os_malloc(size);
+	}
+
+	if (size == 0) {
+		os_free(ptr);
+		return NULL;
+	}
+
+	size_t blk_size = ALIGN(size);
+	struct block_meta *first_block = get_block_from_addr(ptr, blk_meta_size);
+
+	if (first_block->status == STATUS_FREE) {
+		return NULL;
+	}
+
+	if (blk_size + blk_meta_size >= MMAP_THRESHOLD
+		|| first_block->status == STATUS_MAPPED) {		
+		void *new_ptr = os_malloc(blk_size);
+
+		if (first_block->size < blk_size)
+			memcpy(new_ptr, ptr, first_block->size);
+		else
+			memcpy(new_ptr, ptr, blk_size);
+
+		os_free(ptr);
+
+		return new_ptr;
+	}
+
+	struct block_meta *new = NULL;
+
+	if (blk_size < first_block->size) {
+		new = split_blk(first_block, blk_size, blk_meta_size);
+		return get_addr_from_blk(new, blk_meta_size);
+	} else if (blk_size > first_block->size) {
+		new = expand_realloc(head, first_block, blk_size, blk_meta_size);
+		
+		if (new != NULL) {
+			return get_addr_from_blk(new, blk_meta_size);
+		}
+
+		void *ret_value = os_malloc(size);
+
+		if (first_block->size < size)
+			memcpy(ret_value, ptr, first_block->size);
+		else
+			memcpy(ret_value, ptr, size);
+	
+		os_free(ptr);
+
+		return ret_value;
+	} else {
+		return ptr;
+	}
+
 	return NULL;
 }
