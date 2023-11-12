@@ -68,7 +68,7 @@ void *os_malloc(size_t size)
 	int calloc = 0;
 
 	size_t alginment = ALIGN(size);
-	// printf("align: %u\n", alginment);
+
 	return os_alloc_helper(alginment, MMAP_THRESHOLD, calloc);
 }
 
@@ -126,6 +126,7 @@ void *os_realloc(void *ptr, size_t size)
 		else
 			memcpy(new_ptr, ptr, blk_size);
 
+		// HIER PROBLEM BLYAT
 		os_free(ptr);
 
 		return new_ptr;

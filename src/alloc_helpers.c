@@ -85,7 +85,8 @@ struct block_meta *get_block_from_addr(void *ret_addr, size_t loc_blk_meta_size)
 	return ret;
 }
 
-struct block_meta *expand_realloc(struct block_meta *head, struct block_meta *init, size_t req_size, size_t loc_blk_meta_size) {
+struct block_meta *expand_realloc(struct block_meta *head, struct block_meta *init, size_t req_size, size_t loc_blk_meta_size)
+{
 	if (!head) {
 		// List is empty, nothing to do
 		return NULL;

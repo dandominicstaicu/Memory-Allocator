@@ -67,6 +67,7 @@ void add_in_list(struct block_meta **head, struct block_meta **tail, struct bloc
 	}
 }
 
+
 struct block_meta *find_block_with_size(struct block_meta *head, size_t needed_size, size_t loc_blk_meta_size)
 {
 	// Return NULL if the list is empty
@@ -76,13 +77,15 @@ struct block_meta *find_block_with_size(struct block_meta *head, size_t needed_s
 
 	// Merge consecutive free blocks
 	for (struct block_meta *current = head; current && current->next; ) {
-		if (current != heap_end && current->status == STATUS_FREE && current->next->status == STATUS_FREE) {
-			// Merge current and next blocks
-			current->size += current->next->size + loc_blk_meta_size;
-			current->next = current->next->next;
-		} else {
-			// Move to the next block
-			current = current->next;
+		if (current && current->next) {
+			if (current->status == STATUS_FREE && current->next->status == STATUS_FREE) {
+				// Merge current and next blocks
+				current->size += current->next->size + loc_blk_meta_size;
+				current->next = current->next->next;
+			} else {
+				// Move to the next block
+				current = current->next;
+			}
 		}
 	}
 
@@ -123,22 +126,49 @@ struct block_meta *find_block_with_size(struct block_meta *head, size_t needed_s
 	return NULL;
 }
 
-struct block_meta *split_blk(struct block_meta *initial, size_t needed_size, size_t loc_blk_meta_size)
-{
-	if (initial->size >= needed_size + ALIGN(1) + loc_blk_meta_size) {
-		struct block_meta *new_block = (struct block_meta *)((char *)initial + loc_blk_meta_size + needed_size);
+// struct block_meta *split_blk(struct block_meta *initial, size_t needed_size, size_t loc_blk_meta_size)
+// {
+// 	if (initial->size >= needed_size + ALIGN(1) + loc_blk_meta_size) {
+// 		struct block_meta *new_block = (struct block_meta *)((char *)initial + loc_blk_meta_size + needed_size);
 
-		new_block->size = initial->size - needed_size - loc_blk_meta_size;
-		new_block->status = STATUS_FREE;
-		new_block->next = initial->next;
+// 		new_block->size = initial->size - needed_size - loc_blk_meta_size;
+// 		new_block->status = STATUS_FREE;
+// 		new_block->next = initial->next;
 
-		initial->size = needed_size;
-		initial->status = STATUS_ALLOC;
-		initial->next = new_block;
-	}
+// 		initial->size = needed_size;
+// 		initial->status = STATUS_ALLOC;
+// 		initial->next = new_block;
+// 	}
 
-	// Return the initial block, which is now the correctly sized allocated block
-	return initial;
+// 	// Return the initial block, which is now the correctly sized allocated block
+// 	return initial;
+// }
+
+struct block_meta *split_blk(struct block_meta *initial, size_t needed_size, size_t loc_blk_meta_size) {
+    // Ensure the block is large enough to be split
+    if (initial->size >= needed_size + ALIGN(1) + loc_blk_meta_size) {
+        // Create a new block at the position after the needed size in the initial block
+        struct block_meta *new_block = (struct block_meta *)((char *)initial + loc_blk_meta_size + needed_size);
+
+        // Configure the new block
+        new_block->size = initial->size - needed_size - loc_blk_meta_size;
+        new_block->status = STATUS_FREE;
+        new_block->next = initial->next;
+        new_block->prev = initial; // Set the previous pointer to the initial block
+
+        // Update the initial block
+        initial->size = needed_size;
+        initial->status = STATUS_ALLOC;
+        initial->next = new_block;
+
+        // Update the previous pointer of the next block in the list, if it exists
+        if (new_block->next) {
+            new_block->next->prev = new_block;
+        }
+    }
+
+    // Return the initial block, now resized
+    return initial;
 }
 
 struct block_meta *get_last_brk_blk(struct block_meta *head)
@@ -164,29 +194,59 @@ struct block_meta *get_last_brk_blk(struct block_meta *head)
 	return NULL;
 }
 
+
+
+// DID NOT REMOVE 0X7FFFF7FB1000
+// void remove_from_list(struct block_meta **head, struct block_meta **tail, struct block_meta *current) {
+// 	// Check if the list is empty or current is NULL
+// 	if (*head == NULL || current == NULL) {
+// 		return;
+// 	}
+
+// 	// If the node to be deleted is the head node
+// 	if (*head == current) {
+// 		*head = current->next;
+// 	}
+
+// 	// If the node to be deleted is the tail node
+// 	if (*tail == current) {
+// 		*tail = current->prev;
+// 	}
+
+// 	// If the node to be deleted is NOT the last node, then change the next of the previous node
+// 	if (current->next != NULL) {
+// 		current->next->prev = current->prev;
+// 	}
+
+// 	// If the node to be deleted is NOT the first node, then change the prev of the next node
+// 	if (current->prev != NULL) {
+// 		current->prev->next = current->next;
+// 	}
+// }
+
 void remove_from_list(struct block_meta **head, struct block_meta **tail, struct block_meta *current) {
-	// Check if the list is empty or current is NULL
-	if (*head == NULL || current == NULL) {
-		return;
-	}
+    // If the list is empty or current is NULL, there's nothing to delete
+    if (*head == NULL || current == NULL)
+        return;
 
-	// If the node to be deleted is the head node
-	if (*head == current) {
-		*head = current->next;
-	}
-
-	// If the node to be deleted is the tail node
-	if (*tail == current) {
-		*tail = current->prev;
-	}
-
-	// If the node to be deleted is NOT the last node, then change the next of the previous node
-	if (current->next != NULL) {
-		current->next->prev = current->prev;
-	}
-
-	// If the node to be deleted is NOT the first node, then change the prev of the next node
-	if (current->prev != NULL) {
-		current->prev->next = current->next;
-	}
+    // If the node to be deleted is the head node
+    if (*head == current) {
+        *head = current->next;
+        // If there's a next node, update its prev pointer
+        if (current->next != NULL) {
+            current->next->prev = NULL;
+        } else {
+            // If there's no next node, then the list is now empty
+            *tail = NULL;
+        }
+    } else if (*tail == current) { // If the node to be deleted is the tail node
+        *tail = current->prev;
+        if (current->prev != NULL) {
+            current->prev->next = NULL;
+        }
+    } else { // If the node is in the middle of the list
+        current->prev->next = current->next;
+		if (current->next != NULL)
+        	current->next->prev = current->prev;
+    }
 }
