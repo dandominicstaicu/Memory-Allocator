@@ -1,20 +1,22 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 #include "alloc_helpers.h"
 
 extern struct block_meta *head;
 extern struct block_meta *tail;
 
-extern void* heap_end;
+extern void *heap_end;
 
 extern int first_brk_alloc;
 
 extern size_t blk_meta_size;
 
-void config_meta(struct block_meta *new_block, size_t size, int status)
+void set_meta(struct block_meta *block, size_t size, int status)
 {
-	new_block->size = size;
-	new_block->status = status;
-	new_block->next = NULL;
-	new_block->prev = NULL;
+	block->size = size;
+	block->status = status;
+	block->next = NULL;
+	block->prev = NULL;
 }
 
 void *mmap_alloc(size_t blk_size)
@@ -25,7 +27,7 @@ void *mmap_alloc(size_t blk_size)
 
 	struct block_meta *new_block = (struct block_meta *)mem;
 
-	config_meta(new_block, blk_size, STATUS_MAPPED);
+	set_meta(new_block, blk_size, STATUS_MAPPED);
 
 	add_in_list(&head, &tail, new_block, STATUS_MAPPED);
 
@@ -39,14 +41,15 @@ void *first_heap_alloc(size_t threshold)
 
 	// Do the prealloc
 	void *ret_addr = sbrk(threshold);
-	heap_end = ret_addr;
 
 	// Check if sbrk failed
 	DIE(ret_addr == ((void *) -1), "Error at sbrk in heap alloc\n");
 
+	heap_end = ret_addr;
+
 	struct block_meta *new_block = (struct block_meta *)ret_addr;
 
-	config_meta(new_block, threshold - blk_meta_size, STATUS_ALLOC);
+	set_meta(new_block, threshold - blk_meta_size, STATUS_ALLOC);
 
 	add_in_list(&head, &tail, new_block, STATUS_ALLOC);
 
@@ -58,14 +61,15 @@ struct block_meta *new_heap(size_t blk_size)
 {
 	// Alloc the size that we need on the heap
 	void *ret_addr = sbrk(blk_size + blk_meta_size);
-	heap_end = (char *)heap_end + blk_size + blk_meta_size;
 
 	// Check if sbrk failed
 	DIE(ret_addr == ((void *) -1), "Error at sbrk in alloc new heap\n");
 
+	heap_end = (char *)heap_end + blk_size + blk_meta_size;
+
 	struct block_meta *new_block = (struct block_meta *)ret_addr;
 
-	config_meta(new_block, blk_size, STATUS_ALLOC);
+	set_meta(new_block, blk_size, STATUS_ALLOC);
 
 	add_in_list(&head, &tail, new_block, STATUS_ALLOC);
 
@@ -75,17 +79,21 @@ struct block_meta *new_heap(size_t blk_size)
 void *get_addr_from_blk(struct block_meta *block, size_t meta_size)
 {
 	// The memory block starts right after the metadata
-	return (void *)((char *)block + meta_size);
+	char *ret_addr = (char *)block + meta_size;
+
+	return (void *)ret_addr;
 }
 
 struct block_meta *get_block_from_addr(void *ret_addr, size_t loc_blk_meta_size)
 {
 	// The metadata starts right before the memory block
 	struct block_meta *ret = (struct block_meta *)((char *)ret_addr - loc_blk_meta_size);
+
 	return ret;
 }
 
-struct block_meta *expand_realloc(struct block_meta *head, struct block_meta *init, size_t req_size, size_t loc_blk_meta_size)
+struct block_meta *expand_realloc(struct block_meta *head, struct block_meta *init,
+								  size_t req_size, size_t loc_blk_meta_size)
 {
 	if (!head) {
 		// List is empty, nothing to do
@@ -101,16 +109,16 @@ struct block_meta *expand_realloc(struct block_meta *head, struct block_meta *in
 			// Check if the next block is free and can be merged
 			while (current->next && current->next->status == STATUS_FREE) {
 				current->size += current->next->size + loc_blk_meta_size;
+
 				struct block_meta *next = current->next;
+
 				current->next = next->next;
-				if (next->next && current != head) {
+				if (next->next && current != head)
 					next->next->prev = current;
-				}
 
 				// Check if the block is now big enough
-				if (current->size >= req_size) {
+				if (current->size >= req_size)
 					return split_blk(current, req_size, loc_blk_meta_size);
-				}
 			}
 
 			break;
@@ -126,83 +134,89 @@ struct block_meta *expand_realloc(struct block_meta *head, struct block_meta *in
 			return NULL;
 
 		void *ret_addr = sbrk(req_size - current->size);
-		DIE(ret_addr == (void *)-1, "Error at sbrk in expand_realloc\n");
+
+		DIE(ret_addr == (void *)-1, "Error at sbrk in expand realloc\n");
 
 		heap_end = (char *)heap_end + (req_size - current->size);
 
-		config_meta(init, req_size, STATUS_ALLOC);
+		set_meta(init, req_size, STATUS_ALLOC);
 		return init;
 	}
 
 	return NULL; // Expansion not possible
 }
 
-size_t get_available_heap_space() {
-    size_t total_free_space = 0;
-    struct block_meta *current = head;  // Assuming heap_start points to the start of your heap
+size_t get_available_heap_space(void)
+{
+	size_t total_free_space = 0;
+	struct block_meta *current = head;  // Assuming heap_start points to the start of your heap
 
-    while (current != NULL) {
-        if (current->status == STATUS_FREE) {
-            total_free_space += current->size;
-        }
-        current = current->next;  // Assuming each block_meta has a pointer to the next block
-    }
+	while (current != NULL) {
+		if (current->status == STATUS_FREE)
+			total_free_space += current->size;
 
-    return total_free_space;
+		current = current->next;  // Assuming each block_meta has a pointer to the next block
+	}
+
+	return total_free_space;
 }
 
-size_t get_block_count() {
-    size_t count = 0;
-    struct block_meta *current = head;
+size_t get_block_count(void)
+{
+	size_t count = 0;
+	struct block_meta *current = head;
 
-    while (current != NULL) {
-        count++;
-        current = current->next;
-    }
+	while (current != NULL) {
+		count++;
+		current = current->next;
+	}
 
-    return count;
+	return count;
 }
 
-size_t get_largest_free_block_size() {
-    struct block_meta *current = head;
-    size_t max_size = 0;
+size_t get_largest_free_block_size(void)
+{
+	struct block_meta *current = head;
+	size_t max_size = 0;
 
-    while (current != NULL) {
-        if (current->status == STATUS_FREE && current->size > max_size) {
-            max_size = current->size;
-        }
-        current = current->next;
-    }
+	while (current != NULL) {
+		if (current->status == STATUS_FREE && current->size > max_size)
+			max_size = current->size;
 
-    return max_size; // Returns 0 if no free block is found
+		current = current->next;
+	}
+
+	return max_size; // Returns 0 if no free block is found
 }
 
-size_t get_used_space() {
-    size_t total_used = 0;
-    struct block_meta *current = head;
-    
-    while (current != NULL) {
-        if (current->status != STATUS_FREE) {
-            total_used += current->size;
-        }
-        current = current->next;
-    }
+size_t get_used_space(void)
+{
+	size_t total_used = 0;
+	struct block_meta *current = head;
 
-    return total_used;
+	while (current != NULL) {
+		if (current->status != STATUS_FREE)
+			total_used += current->size;
+
+		current = current->next;
+	}
+
+	return total_used;
 }
 
-size_t get_current_heap_size() {
-    if (head == NULL || tail == NULL) {
-        return 0; // Heap is empty
-    }
+size_t get_current_heap_size(void)
+{
+	if (head == NULL || tail == NULL)
+		return 0; // Heap is empty
 
-    // Assuming each block_meta includes the size of the block it represents
-    size_t heap_size = 0;
-    struct block_meta *current = head;
-    while (current != NULL) {
-        heap_size += current->size + sizeof(struct block_meta);
-        current = current->next;
-    }
+	// Assuming each block_meta includes the size of the block it represents
+	size_t heap_size = 0;
+	struct block_meta *current = head;
 
-    return heap_size;
+	while (current != NULL) {
+		heap_size += current->size + sizeof(struct block_meta);
+		current = current->next;
+	}
+
+	return heap_size;
 }

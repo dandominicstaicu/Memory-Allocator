@@ -1,5 +1,6 @@
 {
     "files.associations": {
-        "alloc_helpers.h": "c"
+        "alloc_helpers.h": "c",
+        "block_meta_list.h": "c"
     }
 }
